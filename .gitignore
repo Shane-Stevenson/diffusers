@@ -1,3 +1,5 @@
+*.tar
+
 # Initially taken from GitHub's Python gitignore file
 
 # Byte-compiled / optimized / DLL files
