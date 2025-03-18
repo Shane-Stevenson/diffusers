@@ -43,6 +43,8 @@ import shutil
 from pathlib import Path
 from typing import List, Union
 
+import matplotlib.pyplot as plt
+
 import accelerate
 import cv2
 import numpy as np
@@ -328,6 +330,7 @@ class Text2ImageDataset:
         def transform(example):
             # create mask
             if random.random() < 0.25:  # 25% of the time, use a full mask
+                print(resolution)
                 mask = np.ones((resolution, resolution), np.float32)
             else:
                 masking_types = ["rectangle", "irregular", "outpainting"]
@@ -365,16 +368,71 @@ class Text2ImageDataset:
 
             return example
 
-        processing_pipeline = [
-            wds.decode("pil", handler=wds.ignore_and_continue),
-            wds.rename(
-                image="jpg;png;jpeg;webp", text="text;txt;caption", orig_size="json", handler=wds.warn_and_continue
-            ),
-            wds.map(filter_keys({"image", "text", "orig_size"})),
-            wds.map_dict(orig_size=get_orig_size),
-            wds.map(transform),
-            wds.to_tuple("image", "mask", "masked_image", "text", "orig_size", "crop_coords"),
-        ]
+        def transform_provided_masks(example):
+            image = example["image"]
+            image = TF.resize(image, (resolution, resolution), interpolation=transforms.InterpolationMode.BILINEAR)
+
+            # IDK Why it is mask.jpg but
+            example['mask'] = example["mask.jpg"]
+            print(np.max(example["mask.jpg"]))
+            mask = example["mask"]
+            print(type(mask))
+
+            # get crop coordinates and crop image
+            image = TF.to_tensor(image)
+            image = TF.normalize(image, [0.5], [0.5])
+
+            mask = TF.resize(mask, (resolution, resolution), interpolation=transforms.InterpolationMode.BILINEAR)
+            mask = TF.to_tensor(mask)
+
+            masked_image = image.clone()
+            print(torch.max(mask))
+            print(mask.shape)
+            print(masked_image.shape)
+            masked_image[mask > 0] = 0
+
+            example["image"] = image
+            example["mask"] = mask
+            example["masked_image"] = masked_image
+            example["crop_coords"] = (0, 0) # c_top, c_left
+
+            masked_image_vis = example["masked_image"].permute(1, 2, 0).numpy()
+            image_vis = example["image"].permute(1, 2, 0).numpy()
+
+            # Display the image
+            np.save("image.npy", image_vis)
+            np.save("masked_image.npy", masked_image_vis)
+            quit()
+
+            return example
+
+        # Make this an arg pls
+        custom_mask = True
+
+        if custom_mask:
+            print("AAAAAAAAAA")
+            processing_pipeline = [
+                wds.decode("pil", handler=wds.ignore_and_continue),
+                wds.rename(
+                    image="jpg;png;jpeg;webp", text="text;txt;caption", orig_size="json", handler=wds.warn_and_continue
+                ),
+                # wds.map(filter_keys({"image", "mask", "text", "orig_size"})),
+                wds.map_dict(orig_size=get_orig_size),
+                wds.map(transform_provided_masks),
+                wds.to_tuple("image", "mask", "masked_image", "text", "orig_size", "crop_coords"),
+            ]
+        else:
+            print("SAD")
+            processing_pipeline = [
+                wds.decode("pil", handler=wds.ignore_and_continue),
+                wds.rename(
+                    image="jpg;png;jpeg;webp", text="text;txt;caption", orig_size="json", handler=wds.warn_and_continue
+                ),
+                wds.map(filter_keys({"image", "text", "orig_size"})),
+                wds.map_dict(orig_size=get_orig_size),
+                wds.map(transform),
+                wds.to_tuple("image", "mask", "masked_image", "text", "orig_size", "crop_coords"),
+            ]
 
         # Create train dataset and loader
         pipeline = [
@@ -392,7 +450,7 @@ class Text2ImageDataset:
         print("SAMPLES: ", num_samples)
 
         # each worker is iterating over this
-        self._train_dataset = wds.DataPipeline(*pipeline)
+        self._train_dataset = wds.DataPipeline(*pipeline).with_length(1500)
         self._train_dataloader = wds.WebLoader(
             self._train_dataset,
             batch_size=None,
@@ -938,6 +996,7 @@ def main(args):
         log_with=args.report_to,
         project_config=accelerator_project_config,
         split_batches=True,  # It's important to set this to True when using webdataset to get the right number of steps for lr scheduling. If set to False, the number of steps will be devide by the number of processes assuming batches are multiplied by the number of processes
+        device_placement=True
     )
 
     # Make one log on every process with the configuration for debugging.
@@ -1325,6 +1384,8 @@ def main(args):
     for epoch in range(first_epoch, args.num_train_epochs):
         print("epoch: ", epoch)
         for step, batch in enumerate(train_dataloader):
+            print("step: ", step)
+            quit()
             with accelerator.accumulate(unet):
                 image, mask, masked_image, text, orig_size, crop_coords = batch
 
@@ -1375,6 +1436,9 @@ def main(args):
                 # Cubic sampling to sample a random timestep for each image
                 timesteps = torch.rand((bsz,), device=latents.device)
                 timesteps = timesteps.long()
+                print(timesteps.dtype)
+                print(latents.dtype)
+                print(noise.dtype)
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
