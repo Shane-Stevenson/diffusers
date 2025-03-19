@@ -374,9 +374,7 @@ class Text2ImageDataset:
 
             # IDK Why it is mask.jpg but
             example['mask'] = example["mask.jpg"]
-            print(np.max(example["mask.jpg"]))
             mask = example["mask"]
-            print(type(mask))
 
             # get crop coordinates and crop image
             image = TF.to_tensor(image)
@@ -384,12 +382,10 @@ class Text2ImageDataset:
 
             mask = TF.resize(mask, (resolution, resolution), interpolation=transforms.InterpolationMode.BILINEAR)
             mask = TF.to_tensor(mask)
+            mask = mask[0:1, :, :]
 
             masked_image = image.clone()
-            print(torch.max(mask))
-            print(mask.shape)
-            print(masked_image.shape)
-            masked_image[mask > 0] = 0
+            masked_image[mask.expand_as(image) > 0] = 0
 
             example["image"] = image
             example["mask"] = mask
@@ -398,11 +394,6 @@ class Text2ImageDataset:
 
             masked_image_vis = example["masked_image"].permute(1, 2, 0).numpy()
             image_vis = example["image"].permute(1, 2, 0).numpy()
-
-            # Display the image
-            np.save("image.npy", image_vis)
-            np.save("masked_image.npy", masked_image_vis)
-            quit()
 
             return example
 
@@ -1385,7 +1376,6 @@ def main(args):
         print("epoch: ", epoch)
         for step, batch in enumerate(train_dataloader):
             print("step: ", step)
-            quit()
             with accelerator.accumulate(unet):
                 image, mask, masked_image, text, orig_size, crop_coords = batch
 
